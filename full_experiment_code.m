@@ -330,7 +330,6 @@ while (loop<loopmax)
     end
     times(loop+1) = cputime-t0;
     mses(loop+1) = sum(sum((x_pre1-true_x).^2));
-    
     % judge the quality of the current signal/image at the certain iteration
     if (abs(f-f_pre1))/f_pre1<eps  && loop>=100
         fprintf('abs(f-f_pre1)/f_pre1 < %f\n',eps);
@@ -354,7 +353,116 @@ end
 
 
 % -------------------------------------- ist ------------------------------------
-%IST algorithm is similar to TWIST, and I will not give it anymore.
+function [x,objective,times,mses]=ist(y,K,KT,true_x,lambda,Phi,eps,x0,loopmax)
+% This function solves the linear inverse problem with a regularizer, such as
+% arg min_x = 0.5*|| y - K*x ||_2^2 + lambda*Phi( x )
+%
+%Up to nine parameters are allowed to input to the function as well as
+%four at least.
+%
+% Author: Yijie Zhu, March, 2017.
+
+%default eigenvalues and parameters
+ebsh1=1e-4;
+ebshm=1;
+rho=(1-sqrt(ebsh1))/(1+sqrt(ebsh1));
+
+if nargin < 9
+    loopmax = 1000;      
+end    
+if nargin<8
+    no_x0=1;
+else no_x0=0;
+end
+
+if nargin < 7
+    eps=1e-3;
+end
+if nargin < 6 
+    Phi=1; %L1 norm
+end       
+if nargin < 5        
+    lambda = 0.1*max(abs(KT(y)));      
+end    
+
+[m,n]=size(y);
+if m<n
+    y=y'; % y should be a column vector
+end
+dim=[0 0];
+if ~isa(K, 'function_handle')
+    dim = size(K);
+    KT = @(x) K'*x;
+    K = @(x) K*x;      
+end
+% when p=1, 'Phi' operator has the form Phi(x)=sum(|x|), for vector/image x.
+% the denoising operator 'Psi' turns to soft thresholding function
+if Phi==1
+    Psi = @(x,T) sign(x).*max(abs(x) - T,0); % soft thresholding function
+    Phi_operator = @(x) norm(x,1);  
+end
+if Phi==2
+%when p=2, 'Phi' operator has the form Phi(x)=TVnorm(x), for vector/image x.
+% the denoising operator 'Psi' turns to 'tvdenoise' function
+    tv_iters = 10;
+    Psi = @(x,th)  tvdenoise_1(x,2/th,tv_iters);
+    Phi_operator = @(x) TVnorm_1(x);
+end
+if no_x0==1
+if dim(2)>0
+    x_pre2 = zeros(dim(2),n); % Initialize x0=0  and  supposing K is a matrix 
+else 
+    x_pre2=zeros(m,n);
+end
+else x_pre2=x0;
+end
+
+x_pre1 = Psi(x_pre2+KT(y-K(x_pre2)),lambda);  % Initialize x1=soft(x0+Phi'*(y-Phi*x0),lambda)  
+resid=y-K(x_pre1);
+f_pre1 = 0.5*(resid(:)'*resid(:))+lambda*Phi_operator(x_pre1); % current value of the objective function
+
+loop = 0; % Initialize iterative number
+objective(1) = f_pre1;
+mses(1) = sum(sum((x_pre1-true_x).^2));
+% start the clock
+t0 = cputime;
+times(1) = cputime - t0;
+
+while (loop<loopmax)
+    %% main idea of the algorithm
+    temp=Psi(x_pre1+KT(y-K(x_pre1)),lambda);
+    mask = (temp ~= 0);  
+    x_pre1 = x_pre1.* mask;
+    x=temp;
+    x_pre2=x_pre1; % update x_pre1 and x_pre2
+    x_pre1=x;
+    %%
+    resid=y-K(x);
+    f=0.5*(resid(:)'*resid(:))+lambda*Phi_operator(x);
+    loop=loop+1;
+    objective(loop+1) = f;
+    times(loop+1) = cputime-t0;
+    mses(loop+1) = sum(sum((x_pre1-true_x).^2));
+    if (abs(f-f_pre1))/f_pre1<eps
+        fprintf('abs(f-f_pre1)/f_pre1 < %f\n',eps);
+        break;
+    end
+    if norm(x_pre1-x_pre2)<eps 
+        fprintf('norm(x-x_pre) < %f\n',eps); 
+        break;  
+    end
+    f_pre1=f;
+end
+%% record the loop time
+times(end)-times(1)
+if loop>=loopmax
+    fprintf('the loop times are beyond the limit %d\n',loopmax);
+else 
+    fprintf('the loop times are %d\n',loop);
+end
+mses=mses/length(true_x(:));
+end
+
 
 
 % --------------------------- tvdneoise_1 半隐式梯度下降法-------------------------
